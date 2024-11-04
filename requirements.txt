@@ -1,0 +1,11 @@
+streamlit
+folium
+streamlit-folium
+requests
+openai 
+google-cloud-texttospeech
+gtts
+geopy
+langchain_google_genai
+langchain
+langchain-community
