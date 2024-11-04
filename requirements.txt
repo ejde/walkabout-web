@@ -9,4 +9,5 @@ geopy
 langchain_google_genai
 langchain
 langchain-community
+opencage
 #json

@@ -10,36 +10,28 @@ import base64
 from langchain_google_genai.chat_models import ChatGoogleGenerativeAI
 from langchain.schema import HumanMessage
 import json, re
-
-# Google Text-to-Speech if you want more sophisticated TTS
-# from google.cloud import texttospeech
+from opencage.geocoder import OpenCageGeocode
 
 st.title("Walkabout - An AI Route Guide")
 
-# User Input for Start and End Locations as GPS coordinates
-start_location = st.text_input("Enter Start Location (Lat, Long):")
-end_location = st.text_input("Enter End Location (Lat, Long):")
+# Location Autocomplete helpers
+geocoder = OpenCageGeocode(st.secrets.get("opencage_key"))
+def get_location_suggestions(query):
+    result = geocoder.geocode(query, no_annotations="1", pretty="1") 
+    suggestions = [r['formatted'] for r in result]
+    return suggestions
 
-if 'route_map' not in st.session_state:
-    st.session_state['route_map'] = None
-if 'route_coordinates' not in st.session_state:
-    st.session_state['route_coordinates'] = None
-if 'pois' not in st.session_state:
-    st.session_state['pois'] = None
-if 'start_coords' not in st.session_state:
-    st.session_state['start_coords'] = None
-if 'end_coords' not in st.session_state:
-    st.session_state['end_coords'] = None
-
-def geocode_locations(start_location, end_location):
-    geolocator = Nominatim(user_agent="streamlit-app")
+def geocode_location(location_name):
     try:
-        start = geolocator.geocode(start_location)
-        end = geolocator.geocode(end_location)
-        return (start.latitude, start.longitude), (end.latitude, end.longitude)
+        location = geocoder.geocode(location_name)
+        if location and len(location) > 0:
+            return location[0]['geometry']['lat'], location[0]['geometry']['lng']
+        else:
+            st.error(f"Location not found: {location_name}")
+            return None
     except Exception as e:
         st.error(f"Error with geocoding: {e}")
-        return None, None
+        return None
 
 def get_route(start_coords, end_coords):
     try:
@@ -53,9 +45,6 @@ def get_route(start_coords, end_coords):
             'end': f"{end_coords[1]},{end_coords[0]}"
         }
         response = requests.get(url, headers=headers, params=params)
-        with open('route.txt', 'w') as file:
-            str = json.dumps(response.json(), indent=4)
-            file.write(str)
         
         route = response.json()
         return route['features'][0]['geometry']['coordinates']
@@ -112,6 +101,9 @@ def extract_pois_from_text(pois_text):
     return poi_list
 
 def get_pois_along_route(route_coordinates):
+    if 'pois' in st.session_state and st.session_state['pois']:
+        return st.session_state['pois']
+    
     chat_model = ChatGoogleGenerativeAI(model='gemini-1.5-pro', google_api_key=st.secrets.get("gemini_key"), temperature=0.8)
     try:
         prompt = f"""
@@ -123,7 +115,8 @@ def get_pois_along_route(route_coordinates):
         * Each section should be concise, fitting within the expected travel time, and incorporate local perspectives, anecdotes, and ongoing issues to enrich the listener's experience.
         * Each section should be spread throughout the route
         * Each numbered section should conform to the following format:
-            1. [GPS Coordinates] [Relevant Content] (e.g. [47.55378762303337, -122.29579514494682] Beacon Hill is known for its diversity, with a large Asian-American population, particularly Filipino, Vietnamese, and Chinese communities. One significant figure from the area is Bob Santos, known as “Uncle Bob,” who was a prominent Filipino-American civil rights leader. )
+            1. [GPS Coordinates] [Relevant Content] (e.g. [47.57164585591287, -122.30824969246655] Beacon Hill is known for its diversity, with a large Asian-American population, particularly Filipino, Vietnamese, and Chinese communities. One significant figure from the area is Bob Santos, known as “Uncle Bob,” who was a prominent Filipino-American civil rights leader. )
+        * Don't mention anything else beyond these sections.
         """
 
         human_message = HumanMessage(content=prompt)
@@ -133,6 +126,7 @@ def get_pois_along_route(route_coordinates):
                 file.write(response.content)
             
             pois = extract_pois_from_text(response.content)
+            st.session_state['pois'] = pois
             return pois
         
         return None
@@ -157,7 +151,7 @@ def simulate_navigation(route_coordinates, pois):
     current_location = route_coordinates[point_index]
 
     st.session_state['route_map'] = render_map(st.session_state['start_coords'], st.session_state['end_coords'], route=route_coordinates, pois=st.session_state['pois'], current_location=current_location)
-
+    
     if pois:
         for poi in pois:
             poi_location = (float(poi['latitude']), float(poi['longitude']))
@@ -169,9 +163,35 @@ def simulate_navigation(route_coordinates, pois):
     
 
 # Main App Logic
+start_location = st.text_input("Enter start location", key="start_location_input")
+if start_location:
+    start_suggestions = get_location_suggestions(start_location)
+    if start_suggestions:
+        selected_start_location = st.selectbox("Select start location", start_suggestions, key="start_selectbox")
+
+end_location = st.text_input("Enter end location", key="end_location_input")
+if end_location:
+    end_suggestions = get_location_suggestions(end_location)
+    if end_suggestions:
+        selected_end_location = st.selectbox("Select end location", end_suggestions, key="end_selectbox")
+
 if st.button("Generate Route"):
-    if start_location and end_location:
-        start_coords, end_coords = geocode_locations(start_location, end_location)
+    st.session_state.clear()
+
+    if 'route_map' not in st.session_state:
+        st.session_state['route_map'] = None
+    if 'route_coordinates' not in st.session_state:
+        st.session_state['route_coordinates'] = None
+    if 'pois' not in st.session_state:
+        st.session_state['pois'] = None
+    if 'start_coords' not in st.session_state:
+        st.session_state['start_coords'] = None
+    if 'end_coords' not in st.session_state:
+        st.session_state['end_coords'] = None
+
+    if selected_start_location and selected_end_location:
+        start_coords = geocode_location(selected_start_location)
+        end_coords = geocode_location(selected_end_location)
         if start_coords and end_coords:
             route = get_route(start_coords, end_coords)
             if route:
@@ -180,10 +200,8 @@ if st.button("Generate Route"):
                 st.session_state['route_coordinates'] = route
 
                 pois = get_pois_along_route(route)
-                if pois:
-                    st.session_state['pois'] = pois
                 
-                st.session_state['route_map'] = render_map(start_coords, end_coords, route, pois=st.session_state['pois'])
+                st.session_state['route_map'] = render_map(start_coords, end_coords, route, pois=pois)
 
 if st.session_state['route_coordinates'] is not None:
     route_coordinates = st.session_state['route_coordinates']
