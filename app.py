@@ -2,7 +2,6 @@
 import streamlit as st
 import folium
 from streamlit_folium import st_folium
-from geopy.geocoders import Nominatim
 import requests
 from gtts import gTTS
 from io import BytesIO
@@ -203,10 +202,10 @@ if st.button("Generate Route"):
                 
                 st.session_state['route_map'] = render_map(start_coords, end_coords, route, pois=pois)
 
-if st.session_state['route_coordinates'] is not None:
+if 'route_coordinates' in st.session_state and st.session_state['route_coordinates'] is not None:
     route_coordinates = st.session_state['route_coordinates']
     simulate_navigation(route_coordinates, st.session_state['pois'])
 
-if st.session_state['route_map'] is not None:
+if 'route_map' in st.session_state and st.session_state['route_map'] is not None:
     st_folium(st.session_state['route_map'], width=725)
 
